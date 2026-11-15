@@ -1,130 +1,102 @@
-const state = { balance: 0, services: [], countries: [], orders: [] };
 const $ = id => document.getElementById(id);
-const elBalance = $('user-balance'), elService = $('select-service'), elCountry = $('select-country');
-const elPrice = $('estimated-price'), elOrdersList = $('orders-list'), elAlert = $('alert-box');
-let toastTimer;
+const phoneForm = $('phone-form');
+const otpForm = $('otp-form');
+const notice = $('notice');
+let currentRequestId = null;
+let currentPhone = '';
 
-function formatRupiah(value) {
-  return new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 }).format(value);
+function showNotice(message, type = 'error') {
+  notice.textContent = message;
+  notice.className = 'notice ' + type;
 }
-function showToast(message) {
-  const toast = $('toast');
-  toast.textContent = message;
-  toast.classList.add('show');
-  clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => toast.classList.remove('show'), 2600);
+function clearNotice() {
+  notice.textContent = '';
+  notice.className = 'notice hidden';
 }
-function showAlert(message) {
-  elAlert.textContent = message;
-  elAlert.classList.remove('hidden');
-}
-async function api(url, options = {}) {
-  const response = await fetch(url, options);
-  const data = await response.json();
+async function api(path, body) {
+  const response = await fetch(path, {
+    method: body ? 'POST' : 'GET',
+    headers: body ? { 'Content-Type': 'application/json' } : {},
+    body: body ? JSON.stringify(body) : undefined,
+    credentials: 'same-origin'
+  });
+  const data = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(data.error || 'Terjadi kesalahan. Coba lagi.');
   return data;
 }
-function updateEstimatedPrice() {
-  const service = state.services.find(s => s.id === elService.value);
-  const country = state.countries.find(c => c.id === elCountry.value);
-  if (service && country) elPrice.textContent = formatRupiah(Math.round(service.basePrice * country.multiplier));
+function showAccount(phone) {
+  $('auth-view').classList.add('hidden');
+  $('account-view').classList.remove('hidden');
+  $('account-phone').textContent = '+' + phone;
 }
-function updateStats() {
-  $('active-count').textContent = state.orders.filter(o => o.status === 'WAITING').length;
-  $('received-count').textContent = state.orders.filter(o => o.status === 'RECEIVED').length;
-  $('order-total').textContent = `${state.orders.length} PESANAN`;
+function normalizeInputPhone(value) {
+  return value.replace(/[^0-9+]/g, '');
 }
-function escapeHtml(value) {
-  return String(value).replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
-}
-function renderOrders() {
-  updateStats();
-  if (!state.orders.length) {
-    elOrdersList.innerHTML = '<div class="empty-state"><div class="empty-icon">▤</div><strong>Belum ada pesanan</strong><p>Nomor yang kamu pesan akan muncul di sini.</p></div>';
-    return;
-  }
-  elOrdersList.innerHTML = state.orders.map(order => {
-    let status = '';
-    if (order.status === 'WAITING') status = `<div class="order-right"><span class="waiting">● Menunggu SMS</span><button class="btn-cancel" data-cancel="${escapeHtml(order.id)}">Batalkan</button></div>`;
-    else if (order.status === 'RECEIVED') status = `<div class="order-right"><div class="otp-box"><div class="order-meta">KODE OTP MASUK</div><div class="otp-code" data-copy="${escapeHtml(order.otpCode)}">${escapeHtml(order.otpCode)}</div></div></div>`;
-    else status = `<div class="order-right"><span class="cancelled">${order.status === 'EXPIRED' ? 'Kedaluwarsa · Refund' : 'Dibatalkan · Refund'}</span></div>`;
-    return `<article class="order-item"><div><div class="order-meta">${escapeHtml(order.serviceName)} · ${escapeHtml(order.countryName)} · #${escapeHtml(order.id)}</div><div class="phone-display" data-copy="${escapeHtml(order.phoneNumber)}">${escapeHtml(order.phoneNumber)}　<span style="font-size:10px;color:#8093b7">▢ salin</span></div><div class="order-price">Biaya ${formatRupiah(order.price)}</div></div>${status}</article>`;
-  }).join('');
-}
-async function refreshOrder(order) {
-  try {
-    const data = await api(`/api/order/${encodeURIComponent(order.id)}/status`);
-    const index = state.orders.findIndex(o => o.id === order.id);
-    if (index !== -1) state.orders[index] = data.order;
-    state.balance = data.balance;
-    elBalance.textContent = formatRupiah(state.balance);
-  } catch (_) {}
-}
-elOrdersList.addEventListener('click', async event => {
-  const copyTarget = event.target.closest('[data-copy]');
-  if (copyTarget) {
-    try { await navigator.clipboard.writeText(copyTarget.dataset.copy); showToast('Berhasil disalin ke clipboard'); }
-    catch (_) { showToast('Tidak dapat mengakses clipboard di browser ini'); }
-  }
-  const cancelTarget = event.target.closest('[data-cancel]');
-  if (cancelTarget) {
-    cancelTarget.disabled = true;
-    try {
-      const data = await api(`/api/order/${encodeURIComponent(cancelTarget.dataset.cancel)}/cancel`, { method: 'POST' });
-      state.balance = data.balance;
-      const index = state.orders.findIndex(o => o.id === data.order.id);
-      if (index !== -1) state.orders[index] = data.order;
-      elBalance.textContent = formatRupiah(state.balance);
-      renderOrders();
-      showToast('Pesanan dibatalkan. Saldo demo dikembalikan.');
-    } catch (error) { showToast(error.message); cancelTarget.disabled = false; }
-  }
-});
-elService.addEventListener('change', updateEstimatedPrice);
-elCountry.addEventListener('change', updateEstimatedPrice);
-$('btn-order').addEventListener('click', async () => {
-  const button = $('btn-order');
+
+phoneForm.addEventListener('submit', async event => {
+  event.preventDefault();
+  clearNotice();
+  const button = $('send-button');
+  const phone = normalizeInputPhone($('phone').value);
   button.disabled = true;
-  elAlert.classList.add('hidden');
+  button.textContent = 'Mengirim SMS...';
   try {
-    const data = await api('/api/order', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ serviceId: elService.value, countryId: elCountry.value }) });
-    state.balance = data.balance;
-    state.orders.unshift(data.order);
-    elBalance.textContent = formatRupiah(state.balance);
-    renderOrders();
-    showToast('Nomor demo berhasil dibuat.');
-  } catch (error) { showAlert(error.message); }
-  finally { button.disabled = false; }
-});
-$('btn-topup').addEventListener('click', async () => {
-  const raw = prompt('Masukkan nominal isi saldo demo (minimal Rp1.000):', '25000');
-  if (raw === null) return;
-  const amount = Number(raw);
-  try {
-    const data = await api('/api/topup', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ amount }) });
-    state.balance = data.balance;
-    elBalance.textContent = formatRupiah(state.balance);
-    showToast('Saldo demo berhasil ditambahkan.');
-  } catch (error) { showAlert(error.message); }
-});
-async function initApp() {
-  try {
-    const data = await api('/api/init');
-    Object.assign(state, data);
-    elBalance.textContent = formatRupiah(state.balance);
-    elService.innerHTML = state.services.map(s => `<option value="${escapeHtml(s.id)}">${escapeHtml(s.name)}</option>`).join('');
-    elCountry.innerHTML = state.countries.map(c => `<option value="${escapeHtml(c.id)}">${c.flag} ${escapeHtml(c.name)} (${escapeHtml(c.code)})</option>`).join('');
-    updateEstimatedPrice();
-    renderOrders();
-    $('today-date').textContent = new Intl.DateTimeFormat('id-ID', { weekday:'long', day:'numeric', month:'long', year:'numeric' }).format(new Date());
+    const data = await api('/api/auth/request-otp', { phone });
+    currentRequestId = data.requestId;
+    currentPhone = phone;
+    phoneForm.classList.add('hidden');
+    otpForm.classList.remove('hidden');
+    $('form-title').textContent = 'Cek SMS kamu';
+    $('form-subtitle').textContent = 'Masukkan kode yang dikirim ke nomor ponsel kamu.';
+    $('code-hint').textContent = data.message + ' Kode berlaku 5 menit.';
+    $('otp').focus();
+    showNotice('Permintaan SMS berhasil dibuat.', 'success');
   } catch (error) {
-    showAlert('Tidak dapat terhubung ke server. Pastikan server Node.js sedang berjalan.');
+    showNotice(error.message);
+  } finally {
+    button.disabled = false;
+    button.innerHTML = 'Kirim kode SMS <span>→</span>';
   }
-}
-setInterval(async () => {
-  const waiting = state.orders.filter(o => o.status === 'WAITING');
-  if (!waiting.length) return;
-  for (const order of waiting) await refreshOrder(order);
-  renderOrders();
-}, 3000);
-initApp();
+});
+
+otpForm.addEventListener('submit', async event => {
+  event.preventDefault();
+  clearNotice();
+  const button = $('verify-button');
+  button.disabled = true;
+  button.textContent = 'Memeriksa kode...';
+  try {
+    const data = await api('/api/auth/verify-otp', { requestId: currentRequestId, otp: $('otp').value.trim() });
+    showAccount(data.user.phone);
+  } catch (error) {
+    showNotice(error.message);
+  } finally {
+    button.disabled = false;
+    button.innerHTML = 'Verifikasi nomor <span>→</span>';
+  }
+});
+
+$('back-button').addEventListener('click', () => {
+  currentRequestId = null;
+  otpForm.classList.add('hidden');
+  phoneForm.classList.remove('hidden');
+  $('form-title').textContent = 'Masuk atau daftar';
+  $('form-subtitle').textContent = 'Masukkan nomor ponsel aktif untuk menerima kode verifikasi.';
+  $('otp').value = '';
+  clearNotice();
+});
+$('logout-button').addEventListener('click', async () => {
+  try { await api('/api/auth/logout', {}); } catch (_) {}
+  $('account-view').classList.add('hidden');
+  $('auth-view').classList.remove('hidden');
+  $('phone').value = '';
+  currentRequestId = null;
+  clearNotice();
+});
+
+(async function init() {
+  try {
+    const data = await api('/api/auth/me');
+    if (data.authenticated) showAccount(data.user.phone);
+  } catch (_) {}
+})();

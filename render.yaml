@@ -5,4 +5,15 @@ services:
     plan: free
     buildCommand: npm install
     startCommand: npm start
-    healthCheckPath: /api/init
+    healthCheckPath: /api/health
+    envVars:
+      - key: OTP_ID_API_KEY
+        sync: false
+      - key: OTP_ID_BASE_URL
+        value: https://api.otp.id
+      - key: OTP_ID_BRAND
+        value: NokosID
+      - key: SESSION_SECRET
+        generateValue: true
+      - key: NODE_ENV
+        value: production

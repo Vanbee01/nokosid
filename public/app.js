@@ -1,102 +1,21 @@
 const $ = id => document.getElementById(id);
-const phoneForm = $('phone-form');
-const otpForm = $('otp-form');
-const notice = $('notice');
-let currentRequestId = null;
-let currentPhone = '';
-
-function showNotice(message, type = 'error') {
-  notice.textContent = message;
-  notice.className = 'notice ' + type;
-}
-function clearNotice() {
-  notice.textContent = '';
-  notice.className = 'notice hidden';
-}
-async function api(path, body) {
-  const response = await fetch(path, {
-    method: body ? 'POST' : 'GET',
-    headers: body ? { 'Content-Type': 'application/json' } : {},
-    body: body ? JSON.stringify(body) : undefined,
-    credentials: 'same-origin'
-  });
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(data.error || 'Terjadi kesalahan. Coba lagi.');
-  return data;
-}
-function showAccount(phone) {
-  $('auth-view').classList.add('hidden');
-  $('account-view').classList.remove('hidden');
-  $('account-phone').textContent = '+' + phone;
-}
-function normalizeInputPhone(value) {
-  return value.replace(/[^0-9+]/g, '');
-}
-
-phoneForm.addEventListener('submit', async event => {
-  event.preventDefault();
-  clearNotice();
-  const button = $('send-button');
-  const phone = normalizeInputPhone($('phone').value);
-  button.disabled = true;
-  button.textContent = 'Mengirim SMS...';
-  try {
-    const data = await api('/api/auth/request-otp', { phone });
-    currentRequestId = data.requestId;
-    currentPhone = phone;
-    phoneForm.classList.add('hidden');
-    otpForm.classList.remove('hidden');
-    $('form-title').textContent = 'Cek SMS kamu';
-    $('form-subtitle').textContent = 'Masukkan kode yang dikirim ke nomor ponsel kamu.';
-    $('code-hint').textContent = data.message + ' Kode berlaku 5 menit.';
-    $('otp').focus();
-    showNotice('Permintaan SMS berhasil dibuat.', 'success');
-  } catch (error) {
-    showNotice(error.message);
-  } finally {
-    button.disabled = false;
-    button.innerHTML = 'Kirim kode SMS <span>→</span>';
-  }
-});
-
-otpForm.addEventListener('submit', async event => {
-  event.preventDefault();
-  clearNotice();
-  const button = $('verify-button');
-  button.disabled = true;
-  button.textContent = 'Memeriksa kode...';
-  try {
-    const data = await api('/api/auth/verify-otp', { requestId: currentRequestId, otp: $('otp').value.trim() });
-    showAccount(data.user.phone);
-  } catch (error) {
-    showNotice(error.message);
-  } finally {
-    button.disabled = false;
-    button.innerHTML = 'Verifikasi nomor <span>→</span>';
-  }
-});
-
-$('back-button').addEventListener('click', () => {
-  currentRequestId = null;
-  otpForm.classList.add('hidden');
-  phoneForm.classList.remove('hidden');
-  $('form-title').textContent = 'Masuk atau daftar';
-  $('form-subtitle').textContent = 'Masukkan nomor ponsel aktif untuk menerima kode verifikasi.';
-  $('otp').value = '';
-  clearNotice();
-});
-$('logout-button').addEventListener('click', async () => {
-  try { await api('/api/auth/logout', {}); } catch (_) {}
-  $('account-view').classList.add('hidden');
-  $('auth-view').classList.remove('hidden');
-  $('phone').value = '';
-  currentRequestId = null;
-  clearNotice();
-});
-
-(async function init() {
-  try {
-    const data = await api('/api/auth/me');
-    if (data.authenticated) showAccount(data.user.phone);
-  } catch (_) {}
-})();
+let currentRequestId=null,currentUser=null;
+const rupiah=v=>new Intl.NumberFormat('id-ID',{style:'currency',currency:'IDR',maximumFractionDigits:0}).format(Number(v||0));
+function note(id,msg,type='error'){const e=$(id);e.textContent=msg;e.className='notice '+type;}
+function clear(id){$(id).textContent='';$(id).className='notice hidden';}
+async function api(path,body){const r=await fetch(path,{method:body?'POST':'GET',headers:body?{'Content-Type':'application/json'}:{},body:body?JSON.stringify(body):undefined,credentials:'same-origin'});const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.error||'Terjadi kesalahan.');return d;}
+function esc(v){return String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+function showDashboard(user){currentUser=user;$('auth-view').classList.add('hidden');$('dashboard').classList.remove('hidden');$('user-phone').textContent='+'+user.phone;$('account-role').textContent=user.role==='admin'?'Admin':'User';loadDashboard();}
+$('phone-form').addEventListener('submit',async e=>{e.preventDefault();clear('notice');const b=$('send-button');b.disabled=true;try{const phone=$('phone').value.replace(/[^0-9+]/g,'');const d=await api('/api/auth/request-otp',{phone});currentRequestId=d.requestId;$('phone-form').classList.add('hidden');$('otp-form').classList.remove('hidden');$('form-title').textContent='Cek WhatsApp kamu';$('form-subtitle').textContent='Masukkan kode verifikasi yang dikirim ke WhatsApp.';note('notice','Permintaan kode berhasil dibuat.','success');$('otp').focus();}catch(x){note('notice',x.message);}finally{b.disabled=false;}});
+$('otp-form').addEventListener('submit',async e=>{e.preventDefault();const b=$('verify-button');b.disabled=true;try{const d=await api('/api/auth/verify-otp',{requestId:currentRequestId,otp:$('otp').value.trim()});showDashboard(d.user);}catch(x){note('notice',x.message);}finally{b.disabled=false;}});
+$('back-button').addEventListener('click',()=>{currentRequestId=null;$('otp-form').classList.add('hidden');$('phone-form').classList.remove('hidden');$('form-title').textContent='Masuk atau daftar';$('form-subtitle').textContent='Masukkan nomor WhatsApp milikmu untuk menerima kode verifikasi.';$('otp').value='';clear('notice');});
+$('logout-button').addEventListener('click',async()=>{try{await api('/api/auth/logout',{});}catch(_){}location.reload();});
+async function loadWallet(){const d=await api('/api/wallet');$('wallet-balance').textContent=rupiah(d.balance);}
+async function loadServices(){const el=$('service-list');el.innerHTML='<div class="empty">Memuat katalog…</div>';try{const d=await api('/api/services');if(!d.services.length){el.innerHTML='<div class="empty">Layanan kosong.</div>';return;}el.innerHTML=d.services.map(s=>'<article class="service"><div><b>'+esc(s.name)+'</b><small>'+Number(s.available).toLocaleString('id-ID')+' nomor tersedia · '+esc(s.category)+'</small></div><div class="service-buy"><strong>'+rupiah(s.price)+'</strong><button class="primary compact buy-button" data-id="'+esc(s.id)+'" '+(s.available<1?'disabled':'')+'>Beli</button></div></article>').join('');el.querySelectorAll('.buy-button').forEach(b=>b.addEventListener('click',()=>buy(b.dataset.id,b)));}catch(x){el.innerHTML='<div class="empty">'+esc(x.message)+'</div>';}}
+async function buy(id,b){if(!confirm('Beli nomor virtual? Saldo akan dipotong.'))return;b.disabled=true;b.textContent='Memproses';try{const d=await api('/api/orders',{serviceId:id});note('dashboard-notice','Nomor dipesan: +'+d.order.phone,'success');await Promise.all([loadWallet(),loadOrders(),loadServices()]);}catch(x){note('dashboard-notice',x.message);}finally{b.disabled=false;b.textContent='Beli';}}
+async function loadOrders(){const el=$('order-list');try{const d=await api('/api/orders'),orders=d.orders||[];$('active-count').textContent=orders.filter(o=>['pending','processing'].includes(o.status)).length;if(!orders.length){el.innerHTML='<div class="empty">Belum ada pesanan.</div>';return;}el.innerHTML=orders.map(o=>'<article class="order"><div class="order-top"><b>'+esc(o.serviceName)+'</b><span class="status '+esc(o.status)+'">'+esc(o.status)+'</span></div><strong class="number">'+(o.phone?'+'+esc(o.phone):'Nomor belum tersedia')+'</strong><small>'+rupiah(o.price)+' · '+new Date(o.createdAt).toLocaleString('id-ID')+'</small>'+(o.otp?'<div class="otp-result">OTP: <b>'+esc(o.otp)+'</b></div>':'')+(o.sms?'<p class="sms">'+esc(o.sms)+'</p>':'')+(['pending','processing'].includes(o.status)?'<div class="order-actions"><button class="secondary small" data-check="'+esc(o.id)+'">Cek SMS</button></div>':'')+'</article>').join('');el.querySelectorAll('[data-check]').forEach(b=>b.addEventListener('click',async()=>{b.disabled=true;try{await api('/api/orders/'+b.dataset.check);await loadOrders();}catch(x){note('dashboard-notice',x.message);}finally{b.disabled=false;}}));}catch(x){el.innerHTML='<div class="empty">'+esc(x.message)+'</div>';}}
+async function loadAdmin(){if(currentUser?.role!=='admin')return;$('admin-panel').classList.remove('hidden');try{const s=await api('/api/admin/summary');$('admin-users').textContent=s.users;$('admin-orders').textContent=s.orders;$('admin-volume').textContent=rupiah(s.volume);const d=await api('/api/admin/deposits');$('admin-deposits').innerHTML=d.deposits.length?d.deposits.map(x=>'<article class="order"><b>'+esc(x.phone)+'</b><strong>'+rupiah(x.amount)+'</strong><small>'+esc(x.note||'Tanpa catatan')+'</small><button class="primary compact" data-approve="'+esc(x.id)+'">Setujui setelah cek pembayaran</button></article>').join(''):'<div class="empty">Tidak ada deposit menunggu.</div>';$('admin-deposits').querySelectorAll('[data-approve]').forEach(b=>b.addEventListener('click',async()=>{if(!confirm('Pastikan dana sudah diterima sebelum menyetujui.'))return;b.disabled=true;try{await api('/api/admin/deposits/'+b.dataset.approve+'/approve',{});await loadAdmin();}catch(x){note('dashboard-notice',x.message);}finally{b.disabled=false;}}));}catch(x){note('dashboard-notice',x.message);}}
+async function loadDashboard(){clear('dashboard-notice');try{await Promise.all([loadWallet(),loadServices(),loadOrders()]);await loadAdmin();}catch(x){note('dashboard-notice',x.message);}}
+$('refresh-services').addEventListener('click',loadServices);$('refresh-orders').addEventListener('click',loadOrders);$('deposit-toggle').addEventListener('click',()=>$('deposit-panel').classList.toggle('hidden'));
+$('deposit-form').addEventListener('submit',async e=>{e.preventDefault();try{const d=await api('/api/wallet/deposit',{amount:Number($('deposit-amount').value),note:$('deposit-note').value});note('dashboard-notice',d.message,'success');e.target.reset();$('deposit-panel').classList.add('hidden');}catch(x){note('dashboard-notice',x.message);}});
+(async()=>{try{const d=await api('/api/auth/me');if(d.authenticated)showDashboard(d.user);}catch(_){}})();

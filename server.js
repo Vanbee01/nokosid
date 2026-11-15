@@ -179,9 +179,10 @@ app.post('/api/auth/verify-otp', sameOrigin, async (req, res, next) => {
     const supplied = Buffer.from(hash(requestId + ':' + otp), 'hex');
     const expected = Buffer.from(pending.otp_hash, 'hex');
     if (supplied.length !== expected.length || !crypto.timingSafeEqual(supplied, expected)) return res.status(400).json({ error: 'Kode OTP salah.' });
-    await db().query('UPDATE otp_requests SET used_at = NOW() WHERE id = $1 AND used_at IS NULL', [requestId]);
+    const claimed = await db().query('UPDATE otp_requests SET used_at = NOW() WHERE id = $1 AND used_at IS NULL AND expires_at > NOW() RETURNING id', [requestId]);
+    if (!claimed.length) return res.status(409).json({ error: 'Kode sudah digunakan. Minta kode baru.' });
     const role = ADMIN_PHONE && pending.phone === ADMIN_PHONE ? 'admin' : 'user';
-    const [user] = await db().query('INSERT INTO users(phone, role) VALUES($1, $2) ON CONFLICT(phone) DO UPDATE SET phone = EXCLUDED.phone RETURNING id, phone, role, is_active', [pending.phone, role]);
+    const [user] = await db().query("INSERT INTO users(phone, role) VALUES($1, $2) ON CONFLICT(phone) DO UPDATE SET phone = EXCLUDED.phone, role = CASE WHEN EXCLUDED.role = 'admin' THEN 'admin' ELSE users.role END RETURNING id, phone, role, is_active", [pending.phone, role]);
     await db().query('INSERT INTO wallets(user_id, balance) VALUES($1, 0) ON CONFLICT(user_id) DO NOTHING', [user.id]);
     if (!user.is_active) return res.status(403).json({ error: 'Akun dinonaktifkan oleh admin.' });
     setCookie(res, makeSession(user));
@@ -236,18 +237,16 @@ app.post('/api/orders', sameOrigin, auth, async (req, res, next) => {
     const price = Math.ceil(money(service.price) * (1 + MARKUP_PERCENT / 100));
     if (!Number.isSafeInteger(price) || price < 1) return res.status(400).json({ error: 'Harga layanan tidak valid.' });
     orderId = crypto.randomUUID();
-    const statements = [
-      db().query('UPDATE wallets SET balance = balance - $1, updated_at = NOW() WHERE user_id = $2 AND balance >= $1 RETURNING balance', [price, req.user.id]),
-      db().query('INSERT INTO orders(id, user_id, service_id, service_name, price, status) VALUES($1, $2, $3, $4, $5, $6)', [orderId, req.user.id, serviceId, String(service.name), price, 'creating']),
-      db().query('INSERT INTO wallet_ledger(user_id, entry_type, amount, reference_id, note) VALUES($1, $2, $3, $4, $5)', [req.user.id, 'PURCHASE', -price, orderId, 'Pembelian nomor ' + service.name])
-    ];
-    const results = await db().transaction(statements);
-    if (!results[0]?.length) return res.status(402).json({ error: 'Saldo tidak mencukupi.' });
+    const debited = await db().query(
+      'WITH debited AS (UPDATE wallets SET balance = balance - $1, updated_at = NOW() WHERE user_id = $2 AND balance >= $1 RETURNING balance), created AS (INSERT INTO orders(id, user_id, service_id, service_name, price, status) SELECT $3, $2, $4, $5, $1, \'creating\' FROM debited RETURNING id, user_id, price), ledger AS (INSERT INTO wallet_ledger(user_id, entry_type, amount, reference_id, note) SELECT user_id, \'PURCHASE\', -price, id::text, $6 FROM created RETURNING id) SELECT balance FROM debited',
+      [price, req.user.id, orderId, serviceId, String(service.name), 'Pembelian nomor ' + service.name]
+    );
+    if (!debited.length) return res.status(402).json({ error: 'Saldo tidak mencukupi.' });
     const bought = await provider('order', { service: serviceId, operator: process.env.VIRTUSIM_OPERATOR || 'any' });
     const item = bought.data || {};
     await db().query('UPDATE orders SET provider_order_id = $1, phone = $2, status = $3, updated_at = NOW() WHERE id = $4', [String(item.id || ''), String(item.number || ''), 'pending', orderId]);
     const [row] = await db().query('SELECT * FROM orders WHERE id = $1', [orderId]);
-    res.json({ ok: true, order: publicOrder(row), balance: Number(results[0][0].balance) });
+    res.json({ ok: true, order: publicOrder(row), balance: Number(debited[0].balance) });
   } catch (error) {
     if (orderId) {
       try {

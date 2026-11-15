@@ -2,7 +2,6 @@ const express = require('express');
 const crypto = require('node:crypto');
 
 const app = express();
-const PORT = process.env.PORT || 3000;
 const OTP_BASE_URL = (process.env.OTP_ID_BASE_URL || 'https://api.otp.id').replace(/\/$/, '');
 const OTP_API_KEY = process.env.OTP_ID_API_KEY;
 const OTP_BRAND = process.env.OTP_ID_BRAND || 'NokosID';
@@ -180,8 +179,17 @@ app.post('/api/auth/logout', (req, res) => {
 app.get('*', (req, res) => res.sendFile(require('node:path').join(process.cwd(), 'public', 'index.html')));
 
 if (!SESSION_SECRET || SESSION_SECRET.length < 32) {
-  console.error('FATAL: Set SESSION_SECRET to a random secret with at least 32 characters.');
-  process.exit(1);
+  console.warn('SESSION_SECRET is missing or too short; authenticated routes will not work until configured.');
 }
 
-app.listen(PORT, () => console.log('NokosID listening on port ' + PORT));
+// Vercel imports this Express app as a serverless function; local Node runs it directly.
+if (require.main === module) {
+  if (!SESSION_SECRET || SESSION_SECRET.length < 32) {
+    console.error('FATAL: Set SESSION_SECRET to a random secret with at least 32 characters.');
+    process.exit(1);
+  }
+  const PORT = process.env.PORT || 3000;
+  app.listen(PORT, () => console.log('NokosID listening on port ' + PORT));
+}
+
+module.exports = app;

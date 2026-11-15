@@ -1,0 +1,8 @@
+{
+  "name": "nokosid-website",
+  "version": "1.1.0",
+  "description": "Demo dashboard layanan nomor virtual OTP",
+  "main": "server.js",
+  "scripts": { "start": "node server.js" },
+  "dependencies": { "express": "^4.21.0" }
+}

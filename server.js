@@ -2,10 +2,8 @@ const express = require('express');
 const crypto = require('node:crypto');
 
 const app = express();
-const VONAGE_BASE_URL = 'https://api.nexmo.com';
-const VONAGE_API_KEY = process.env.VONAGE_API_KEY;
-const VONAGE_API_SECRET = process.env.VONAGE_API_SECRET;
-const VONAGE_BRAND = process.env.VONAGE_BRAND || 'NokosID';
+const MESSAGE_API_URL = 'https://message.co.id/api/v1/whatsapp/otp/send';
+const MESSAGE_API_KEY = process.env.MESSAGE_CO_ID_API_KEY;
 const SESSION_SECRET = process.env.SESSION_SECRET;
 const IS_PRODUCTION = process.env.NODE_ENV === 'production';
 
@@ -18,11 +16,11 @@ const requestWindows = new Map();
 const verifyAttempts = new Map();
 
 function normalizePhone(value) {
-  let phone = String(value || '').trim().replace(/[\s().-]/g, '');
+  let phone = String(value || '').trim().replace(/[\\s().-]/g, '');
   if (phone.startsWith('+')) phone = phone.slice(1);
   if (phone.startsWith('08')) phone = '62' + phone.slice(1);
   if (phone.startsWith('8')) phone = '62' + phone;
-  if (!/^62[0-9]{9,12}$/.test(phone)) return null;
+  if (!/^[1-9][0-9]{7,14}$/.test(phone)) return null;
   return phone;
 }
 
@@ -71,22 +69,25 @@ function setSessionCookie(res, token) {
   res.setHeader('Set-Cookie', flags.join('; '));
 }
 
-async function vonageRequest(path, payload) {
-  const credentials = Buffer.from(VONAGE_API_KEY + ':' + VONAGE_API_SECRET).toString('base64');
-  const response = await fetch(VONAGE_BASE_URL + path, {
+function hashOtp(requestId, otp) {
+  return crypto.createHmac('sha256', SESSION_SECRET).update(requestId + ':' + otp).digest();
+}
+
+async function sendWhatsAppOtp(phone, otp, idempotencyKey) {
+  const response = await fetch(MESSAGE_API_URL, {
     method: 'POST',
     headers: {
-      'Authorization': 'Basic ' + credentials,
+      'X-API-Key': MESSAGE_API_KEY,
       'Content-Type': 'application/json',
+      'Idempotency-Key': idempotencyKey,
       'Accept': 'application/json'
     },
-    body: JSON.stringify(payload),
+    body: JSON.stringify({ to: phone, message: otp }),
     signal: AbortSignal.timeout(15000)
   });
   const data = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    const message = data?.detail || data?.title || data?.message || 'Vonage menolak permintaan verifikasi.';
-    const error = new Error(String(message).slice(0, 300));
+  if (!response.ok || data?.success !== true || data?.status !== 'accepted') {
+    const error = new Error(data?.message || 'Message.co.id menolak pengiriman WhatsApp OTP.');
     error.status = response.status;
     throw error;
   }
@@ -94,50 +95,69 @@ async function vonageRequest(path, payload) {
 }
 
 app.get('/api/health', (req, res) => {
-  res.json({ ok: true, service: 'NokosID', smsConfigured: Boolean(VONAGE_API_KEY && VONAGE_API_SECRET), provider: 'vonage-verify', timestamp: new Date().toISOString() });
+  res.json({
+    ok: true,
+    service: 'NokosID',
+    whatsappConfigured: Boolean(MESSAGE_API_KEY),
+    provider: 'message.co.id-whatsapp-otp',
+    timestamp: new Date().toISOString()
+  });
 });
 
 app.post('/api/auth/request-otp', async (req, res) => {
-  if (!VONAGE_API_KEY || !VONAGE_API_SECRET) return res.status(503).json({ error: 'Vonage belum dikonfigurasi. Pasang VONAGE_API_KEY dan VONAGE_API_SECRET di server.' });
+  if (!MESSAGE_API_KEY) return res.status(503).json({ error: 'Message.co.id belum dikonfigurasi. Pasang MESSAGE_CO_ID_API_KEY di server.' });
+  if (!SESSION_SECRET || SESSION_SECRET.length < 32) return res.status(503).json({ error: 'Server belum memiliki SESSION_SECRET yang valid.' });
+
   const phone = normalizePhone(req.body.phone);
-  if (!phone) return res.status(400).json({ error: 'Masukkan nomor Indonesia yang valid, contoh 081234567890.' });
+  if (!phone) return res.status(400).json({ error: 'Masukkan nomor WhatsApp format internasional, contoh 628123456789.' });
 
   const ip = req.ip || req.socket.remoteAddress || 'unknown';
   if (!rateLimit('ip:' + ip, 8, 15 * 60 * 1000) || !rateLimit('phone:' + phone, 3, 15 * 60 * 1000)) {
     return res.status(429).json({ error: 'Terlalu banyak permintaan. Coba lagi dalam 15 menit.' });
   }
 
+  const requestId = crypto.randomUUID();
+  const otp = String(crypto.randomInt(100000, 1000000));
   try {
-    const externalId = 'nokosid-' + crypto.randomUUID();
-    const result = await vonageRequest('/v2/verify', {
-      brand: VONAGE_BRAND,
-      code_length: 6,
-      workflow: [{ channel: 'sms', to: '+' + phone }]
+    const result = await sendWhatsAppOtp(phone, otp, 'nokosid-' + requestId);
+    const createdAt = Date.now();
+    pendingOtps.set(requestId, {
+      phone,
+      otpHash: hashOtp(requestId, otp),
+      createdAt,
+      expiresAt: createdAt + 5 * 60 * 1000
     });
-    const verifyRequestId = result?.request_id;
-    if (!verifyRequestId) {
-      return res.status(502).json({ error: 'Vonage tidak mengembalikan ID verifikasi. Periksa log server.' });
-    }
-    const requestId = crypto.randomUUID();
-    pendingOtps.set(requestId, { phone, verifyRequestId, createdAt: Date.now() });
-    setTimeout(() => pendingOtps.delete(requestId), 6 * 60 * 1000).unref?.();
-    res.json({ ok: true, requestId, message: 'Kode verifikasi sedang dikirim melalui SMS.', expiresIn: 300 });
+    setTimeout(() => {
+      pendingOtps.delete(requestId);
+      verifyAttempts.delete(requestId);
+    }, 5 * 60 * 1000).unref?.();
+
+    res.json({
+      ok: true,
+      requestId,
+      message: 'Kode verifikasi telah diterima oleh layanan WhatsApp dan sedang diproses.',
+      expiresIn: 300,
+      providerMessageId: result.message_id
+    });
   } catch (error) {
-    console.error('Vonage Verify request failed:', error.message);
-    res.status(error.status === 429 ? 429 : 502).json({ error: 'Gagal mengirim SMS. Silakan coba lagi nanti.' });
+    console.error('Message.co.id WhatsApp OTP failed:', error.message);
+    const status = error.status === 429 ? 429 : (error.status >= 400 && error.status < 500 ? 400 : 502);
+    res.status(status).json({ error: 'Gagal mengirim WhatsApp OTP. Periksa nomor dan saldo WhatsApp, lalu coba lagi.' });
   }
 });
 
-app.post('/api/auth/verify-otp', async (req, res) => {
-  if (!VONAGE_API_KEY || !VONAGE_API_SECRET) return res.status(503).json({ error: 'Vonage belum dikonfigurasi.' });
+app.post('/api/auth/verify-otp', (req, res) => {
+  if (!SESSION_SECRET || SESSION_SECRET.length < 32) return res.status(503).json({ error: 'Server belum memiliki SESSION_SECRET yang valid.' });
   const requestId = String(req.body.requestId || '');
   const otp = String(req.body.otp || '').trim();
   const pending = pendingOtps.get(requestId);
-  if (!pending || Date.now() - pending.createdAt > 5 * 60 * 1000) {
+
+  if (!pending || Date.now() > pending.expiresAt) {
     pendingOtps.delete(requestId);
+    verifyAttempts.delete(requestId);
     return res.status(400).json({ error: 'Sesi OTP sudah kedaluwarsa. Minta kode baru.' });
   }
-  if (!/^[0-9]{4,8}$/.test(otp)) return res.status(400).json({ error: 'Masukkan kode angka yang valid.' });
+  if (!/^[0-9]{6}$/.test(otp)) return res.status(400).json({ error: 'Masukkan kode OTP enam angka.' });
 
   const attempts = (verifyAttempts.get(requestId) || 0) + 1;
   verifyAttempts.set(requestId, attempts);
@@ -147,20 +167,16 @@ app.post('/api/auth/verify-otp', async (req, res) => {
     return res.status(429).json({ error: 'Batas percobaan tercapai. Minta kode baru.' });
   }
 
-  try {
-    const result = await vonageRequest('/v2/verify/' + encodeURIComponent(pending.verifyRequestId), { code: otp });
-    const verified = result?.status === 'completed';
-    if (!verified) return res.status(400).json({ error: 'Kode salah atau sudah kedaluwarsa. Periksa SMS dan coba lagi.' });
-
-    pendingOtps.delete(requestId);
-    verifyAttempts.delete(requestId);
-    const token = signSession(pending.phone);
-    setSessionCookie(res, token);
-    res.json({ ok: true, user: { phone: pending.phone, verified: true }, message: 'Nomor berhasil diverifikasi.' });
-  } catch (error) {
-    console.error('Vonage Verify check failed:', error.message);
-    res.status(502).json({ error: 'Tidak dapat memverifikasi kode saat ini. Coba lagi.' });
+  const supplied = hashOtp(requestId, otp);
+  if (!crypto.timingSafeEqual(supplied, pending.otpHash)) {
+    return res.status(400).json({ error: 'Kode OTP salah. Periksa kembali pesan WhatsApp Anda.' });
   }
+
+  pendingOtps.delete(requestId);
+  verifyAttempts.delete(requestId);
+  const token = signSession(pending.phone);
+  setSessionCookie(res, token);
+  res.json({ ok: true, user: { phone: pending.phone, verified: true }, message: 'Nomor WhatsApp berhasil diverifikasi.' });
 });
 
 app.get('/api/auth/me', (req, res) => {
@@ -180,7 +196,6 @@ if (!SESSION_SECRET || SESSION_SECRET.length < 32) {
   console.warn('SESSION_SECRET is missing or too short; authenticated routes will not work until configured.');
 }
 
-// Vercel imports this Express app as a serverless function; local Node runs it directly.
 if (require.main === module) {
   if (!SESSION_SECRET || SESSION_SECRET.length < 32) {
     console.error('FATAL: Set SESSION_SECRET to a random secret with at least 32 characters.');

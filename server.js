@@ -296,12 +296,8 @@ app.post('/api/orders/:id/cancel', sameOrigin, auth, async (req, res, next) => {
     if (!['pending', 'processing'].includes(row.status)) return res.status(409).json({ error: 'Pesanan tidak dapat dibatalkan pada status ini.' });
     const result = await provider('set_status', { id: row.provider_order_id, status: 2 });
     if (result.status !== true) return res.status(502).json({ error: 'Provider belum mengonfirmasi pembatalan.' });
-    await db().transaction([
-      db().query('UPDATE wallets SET balance = balance + $1, updated_at = NOW() WHERE user_id = $2', [row.price, req.user.id]),
-      db().query('INSERT INTO wallet_ledger(user_id, entry_type, amount, reference_id, note) VALUES($1, $2, $3, $4, $5) ON CONFLICT(entry_type, reference_id) DO NOTHING', [req.user.id, 'REFUND', row.price, row.id, 'Refund pembatalan pesanan']),
-      db().query('UPDATE orders SET status = $1, updated_at = NOW() WHERE id = $2', ['cancelled', row.id])
-    ]);
-    res.json({ ok: true, message: 'Pesanan dibatalkan dan saldo dikembalikan.' });
+    await db().query('UPDATE orders SET status = $1, updated_at = NOW() WHERE id = $2 AND user_id = $3', ['cancelled', row.id, req.user.id]);
+    res.json({ ok: true, message: 'Permintaan pembatalan diterima provider. Saldo tidak otomatis dikembalikan; kebijakan refund mengikuti provider.' });
   } catch (error) { next(error); }
 });
 

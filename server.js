@@ -2,9 +2,10 @@ const express = require('express');
 const crypto = require('node:crypto');
 
 const app = express();
-const OTP_BASE_URL = (process.env.OTP_ID_BASE_URL || 'https://api.otp.id').replace(/\/$/, '');
-const OTP_API_KEY = process.env.OTP_ID_API_KEY;
-const OTP_BRAND = process.env.OTP_ID_BRAND || 'NokosID';
+const VONAGE_BASE_URL = 'https://api.nexmo.com';
+const VONAGE_API_KEY = process.env.VONAGE_API_KEY;
+const VONAGE_API_SECRET = process.env.VONAGE_API_SECRET;
+const VONAGE_BRAND = process.env.VONAGE_BRAND || 'NokosID';
 const SESSION_SECRET = process.env.SESSION_SECRET;
 const IS_PRODUCTION = process.env.NODE_ENV === 'production';
 
@@ -70,11 +71,12 @@ function setSessionCookie(res, token) {
   res.setHeader('Set-Cookie', flags.join('; '));
 }
 
-async function otpRequest(path, payload) {
-  const response = await fetch(OTP_BASE_URL + path, {
+async function vonageRequest(path, payload) {
+  const credentials = Buffer.from(VONAGE_API_KEY + ':' + VONAGE_API_SECRET).toString('base64');
+  const response = await fetch(VONAGE_BASE_URL + path, {
     method: 'POST',
     headers: {
-      'Authorization': 'Bearer ' + OTP_API_KEY,
+      'Authorization': 'Basic ' + credentials,
       'Content-Type': 'application/json',
       'Accept': 'application/json'
     },
@@ -83,8 +85,8 @@ async function otpRequest(path, payload) {
   });
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
-    const message = data?.error?.message || data?.message || 'Penyedia SMS menolak permintaan.';
-    const error = new Error(message);
+    const message = data?.detail || data?.title || data?.message || 'Vonage menolak permintaan verifikasi.';
+    const error = new Error(String(message).slice(0, 300));
     error.status = response.status;
     throw error;
   }
@@ -92,11 +94,11 @@ async function otpRequest(path, payload) {
 }
 
 app.get('/api/health', (req, res) => {
-  res.json({ ok: true, service: 'NokosID', smsConfigured: Boolean(OTP_API_KEY), timestamp: new Date().toISOString() });
+  res.json({ ok: true, service: 'NokosID', smsConfigured: Boolean(VONAGE_API_KEY && VONAGE_API_SECRET), provider: 'vonage-verify', timestamp: new Date().toISOString() });
 });
 
 app.post('/api/auth/request-otp', async (req, res) => {
-  if (!OTP_API_KEY) return res.status(503).json({ error: 'Layanan SMS belum dikonfigurasi. API key belum dipasang di server.' });
+  if (!VONAGE_API_KEY || !VONAGE_API_SECRET) return res.status(503).json({ error: 'Vonage belum dikonfigurasi. Pasang VONAGE_API_KEY dan VONAGE_API_SECRET di server.' });
   const phone = normalizePhone(req.body.phone);
   if (!phone) return res.status(400).json({ error: 'Masukkan nomor Indonesia yang valid, contoh 081234567890.' });
 
@@ -107,31 +109,27 @@ app.post('/api/auth/request-otp', async (req, res) => {
 
   try {
     const externalId = 'nokosid-' + crypto.randomUUID();
-    const result = await otpRequest('/v3/request', {
-      channel: 'sms',
-      destination: phone,
-      brand: OTP_BRAND,
-      otp_length: 6,
-      ttl: 300,
-      external_id: externalId
+    const result = await vonageRequest('/v2/verify', {
+      brand: VONAGE_BRAND,
+      code_length: 6,
+      workflow: [{ channel: 'sms', to: '+' + phone }]
     });
-    const otpId = result?.data?.otp_id || result?.otp_id;
-    const status = result?.data?.status || result?.status;
-    if (!otpId || status === 'failed') {
-      return res.status(502).json({ error: result?.error?.message || 'SMS belum dapat dikirim. Periksa saldo dan konfigurasi provider.' });
+    const verifyRequestId = result?.request_id;
+    if (!verifyRequestId) {
+      return res.status(502).json({ error: 'Vonage tidak mengembalikan ID verifikasi. Periksa log server.' });
     }
     const requestId = crypto.randomUUID();
-    pendingOtps.set(requestId, { phone, otpId, createdAt: Date.now() });
+    pendingOtps.set(requestId, { phone, verifyRequestId, createdAt: Date.now() });
     setTimeout(() => pendingOtps.delete(requestId), 6 * 60 * 1000).unref?.();
     res.json({ ok: true, requestId, message: 'Kode verifikasi sedang dikirim melalui SMS.', expiresIn: 300 });
   } catch (error) {
-    console.error('OTP request failed:', error.message);
+    console.error('Vonage Verify request failed:', error.message);
     res.status(error.status === 429 ? 429 : 502).json({ error: 'Gagal mengirim SMS. Silakan coba lagi nanti.' });
   }
 });
 
 app.post('/api/auth/verify-otp', async (req, res) => {
-  if (!OTP_API_KEY) return res.status(503).json({ error: 'Layanan SMS belum dikonfigurasi.' });
+  if (!VONAGE_API_KEY || !VONAGE_API_SECRET) return res.status(503).json({ error: 'Vonage belum dikonfigurasi.' });
   const requestId = String(req.body.requestId || '');
   const otp = String(req.body.otp || '').trim();
   const pending = pendingOtps.get(requestId);
@@ -150,8 +148,8 @@ app.post('/api/auth/verify-otp', async (req, res) => {
   }
 
   try {
-    const result = await otpRequest('/v3/verify', { otp_id: pending.otpId, otp });
-    const verified = result?.data?.verified === true || result?.verified === true;
+    const result = await vonageRequest('/v2/verify/' + encodeURIComponent(pending.verifyRequestId), { code: otp });
+    const verified = result?.status === 'completed';
     if (!verified) return res.status(400).json({ error: 'Kode salah atau sudah kedaluwarsa. Periksa SMS dan coba lagi.' });
 
     pendingOtps.delete(requestId);
@@ -160,7 +158,7 @@ app.post('/api/auth/verify-otp', async (req, res) => {
     setSessionCookie(res, token);
     res.json({ ok: true, user: { phone: pending.phone, verified: true }, message: 'Nomor berhasil diverifikasi.' });
   } catch (error) {
-    console.error('OTP verification failed:', error.message);
+    console.error('Vonage Verify check failed:', error.message);
     res.status(502).json({ error: 'Tidak dapat memverifikasi kode saat ini. Coba lagi.' });
   }
 });

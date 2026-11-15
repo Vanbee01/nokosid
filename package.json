@@ -1,8 +1,10 @@
 {
-  "name": "nokosid-website",
-  "version": "1.1.0",
-  "description": "Demo dashboard layanan nomor virtual OTP",
+  "name": "nokosid",
+  "version": "2.0.0",
+  "private": true,
+  "description": "NokosID account verification using transactional SMS OTP",
   "main": "server.js",
+  "engines": { "node": ">=20" },
   "scripts": { "start": "node server.js" },
-  "dependencies": { "express": "^4.21.0" }
+  "dependencies": { "express": "^4.21.2" }
 }

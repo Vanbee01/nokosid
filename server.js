@@ -16,7 +16,7 @@ const requestWindows = new Map();
 const verifyAttempts = new Map();
 
 function normalizePhone(value) {
-  let phone = String(value || '').trim().replace(/[\\s().-]/g, '');
+  let phone = String(value || '').trim().replace(/[\s().-]/g, '');
   if (phone.startsWith('+')) phone = phone.slice(1);
   if (phone.startsWith('08')) phone = '62' + phone.slice(1);
   if (phone.startsWith('8')) phone = '62' + phone;

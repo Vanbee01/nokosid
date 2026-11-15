@@ -1,69 +1,66 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="id">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#0b1020">
-  <meta name="description" content="NokosID demo dashboard nomor virtual OTP.">
-  <title>NokosID — Virtual Number Dashboard</title>
+  <meta name="description" content="NokosID — akun dan verifikasi nomor dengan SMS OTP.">
+  <title>NokosID — Verifikasi Akun</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css">
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/style.css">
 </head>
 <body>
-  <div class="app-shell">
-    <aside class="sidebar">
-      <a class="brand" href="#"><span class="brand-mark">N</span><span>Nokos<span class="brand-accent">ID</span><small>VIRTUAL NUMBER</small></span></a>
-      <div class="side-label">MENU UTAMA</div>
-      <a class="nav-link active" href="#dashboard"><span class="nav-icon">▦</span> Dashboard</a>
-      <a class="nav-link" href="#order-panel"><span class="nav-icon">＋</span> Pesan Nomor</a>
-      <a class="nav-link" href="#orders-panel"><span class="nav-icon">▤</span> Riwayat Pesanan</a>
-      <div class="sidebar-bottom">
-        <div class="help-card"><div class="help-icon">✦</div><strong>Butuh bantuan?</strong><p>Hubungi tim bantuan jika ada kendala pada demo.</p><a href="mailto:support@example.com">Hubungi bantuan ↗</a></div>
-        <div class="profile"><div class="avatar">G</div><div><strong>Guest User</strong><span>Akun demo</span></div><span class="more">•••</span></div>
+  <main class="shell">
+    <header class="topbar">
+      <a class="brand" href="/"><span class="brand-mark">N</span><span>Nokos<span class="accent">ID</span><small>ACCOUNT CENTER</small></span></a>
+      <span class="secure"><i></i> Koneksi aman</span>
+    </header>
+
+    <section class="hero">
+      <div class="hero-copy">
+        <div class="eyebrow">SELAMAT DATANG DI NOKOSID</div>
+        <h1>Satu akun.<br><span>Lebih mudah.</span></h1>
+        <p>Verifikasi nomor ponsel untuk membuat dan mengakses akun NokosID kamu. Kode dikirim melalui SMS.</p>
+        <div class="feature"><span>✓</span><div><b>Verifikasi SMS</b><small>Kode sekali pakai dengan masa berlaku terbatas.</small></div></div>
+        <div class="feature"><span>✓</span><div><b>Privasi akun</b><small>Nomor hanya digunakan untuk keamanan akun.</small></div></div>
       </div>
-    </aside>
 
-    <main class="main-content" id="dashboard">
-      <header class="topbar">
-        <div class="mobile-brand"><span class="brand-mark">N</span> Nokos<span class="brand-accent">ID</span></div>
-        <div class="breadcrumb">Workspace <span>/</span> <strong>Dashboard</strong></div>
-        <div class="top-actions"><span class="status-dot"></span><span class="online-label">Sistem demo aktif</span><button class="icon-button" aria-label="Notifikasi">♧<i></i></button></div>
-      </header>
+      <section class="auth-card" aria-live="polite">
+        <div id="auth-view">
+          <div class="card-kicker">AKUN NOKOSID</div>
+          <h2 id="form-title">Masuk atau daftar</h2>
+          <p class="sub" id="form-subtitle">Masukkan nomor ponsel aktif untuk menerima kode verifikasi.</p>
+          <form id="phone-form">
+            <label for="phone">Nomor ponsel</label>
+            <div class="phone-field"><span>🇮🇩 +62</span><input id="phone" type="tel" inputmode="tel" autocomplete="tel-national" placeholder="81234567890" required maxlength="16"></div>
+            <button class="primary" id="send-button" type="submit">Kirim kode SMS <span>→</span></button>
+          </form>
+          <form id="otp-form" class="hidden">
+            <label for="otp">Kode verifikasi</label>
+            <input id="otp" class="otp-input" type="text" inputmode="numeric" autocomplete="one-time-code" placeholder="Masukkan kode SMS" maxlength="8" required>
+            <div class="code-hint" id="code-hint">Kode berlaku selama 5 menit.</div>
+            <button class="primary" id="verify-button" type="submit">Verifikasi nomor <span>→</span></button>
+            <button class="text-button" id="back-button" type="button">← Ganti nomor</button>
+          </form>
+          <div id="notice" class="notice hidden" role="alert"></div>
+          <div class="legal">Dengan melanjutkan, kamu menyetujui penggunaan nomor ponsel untuk keamanan akun NokosID.</div>
+        </div>
 
-      <section class="welcome-row">
-        <div><div class="eyebrow">MONDAY, YOUR WORKSPACE</div><h1>Selamat datang di NokosID <span>✦</span></h1><p>Kelola nomor virtual dan pantau kode verifikasi dalam satu tempat.</p></div>
-        <div class="welcome-date" id="today-date">—</div>
+        <div id="account-view" class="hidden">
+          <div class="success-mark">✓</div>
+          <div class="card-kicker">VERIFIKASI BERHASIL</div>
+          <h2>Akun kamu aktif</h2>
+          <p class="sub">Nomor ponsel sudah berhasil diverifikasi.</p>
+          <div class="account-number" id="account-phone">—</div>
+          <button class="primary" id="logout-button" type="button">Keluar dari akun</button>
+        </div>
       </section>
+    </section>
 
-      <section class="stats-grid">
-        <article class="stat-card balance-card"><div class="stat-top"><span>Total Saldo</span><span class="stat-icon">◈</span></div><div class="stat-value" id="user-balance">Rp 0</div><div class="stat-foot"><span class="positive">●</span> Saldo akun demo <button id="btn-topup" class="text-button">+ Isi saldo</button></div></article>
-        <article class="stat-card"><div class="stat-top"><span>Pesanan Aktif</span><span class="stat-icon blue">▣</span></div><div class="stat-value" id="active-count">0</div><div class="stat-foot">Nomor yang sedang diproses</div></article>
-        <article class="stat-card"><div class="stat-top"><span>OTP Diterima</span><span class="stat-icon green">✓</span></div><div class="stat-value" id="received-count">0</div><div class="stat-foot">Kode simulasi berhasil diterima</div></article>
-      </section>
-
-      <div class="content-grid">
-        <section class="panel order-panel" id="order-panel">
-          <div class="panel-heading"><div><div class="eyebrow">MULAI SEKARANG</div><h2>Pesan nomor baru</h2><p>Pilih layanan dan lokasi nomor yang kamu butuhkan.</p></div><span class="step-badge">01 / ORDER</span></div>
-          <div class="form-group"><label for="select-service">Pilih layanan <span>Wajib</span></label><div class="select-wrap"><span class="field-icon">▣</span><select id="select-service"></select><span class="select-arrow">⌄</span></div></div>
-          <div class="form-group"><label for="select-country">Pilih negara <span>Wajib</span></label><div class="select-wrap"><span class="field-icon">◎</span><select id="select-country"></select><span class="select-arrow">⌄</span></div></div>
-          <div class="price-box"><div><span class="price-label">Total pembayaran</span><small>Harga per nomor</small></div><strong id="estimated-price">Rp 0</strong></div>
-          <button id="btn-order" class="primary-button">Pesan nomor sekarang <span>→</span></button>
-          <div id="alert-box" class="alert hidden" role="alert"></div>
-          <div class="secure-note"><span>♢</span> Pesanan diproses dalam mode simulasi.</div>
-        </section>
-
-        <section class="panel orders-panel" id="orders-panel">
-          <div class="panel-heading orders-heading"><div><div class="eyebrow">AKTIVITAS TERBARU</div><h2>Nomor & kotak masuk OTP</h2><p>Pantau status pesanan secara otomatis.</p></div><span class="live-pill"><i></i> LIVE UPDATE</span></div>
-          <div class="orders-toolbar"><span>DAFTAR PESANAN</span><span id="order-total">0 PESANAN</span></div>
-          <div id="orders-list" class="orders-list"><div class="empty-state"><div class="empty-icon">▤</div><strong>Belum ada pesanan</strong><p>Nomor yang kamu pesan akan muncul di sini.</p></div></div>
-        </section>
-      </div>
-      <footer><span>© 2026 NokosID. Demo interface.</span><span><i class="footer-dot"></i> Seluruh transaksi pada versi ini bersifat simulasi.</span></footer>
-    </main>
-  </div>
-  <div id="toast" class="toast" role="status"></div>
-  <script src="app.js"></script>
+    <footer><span>© 2026 NokosID</span><span>Jangan bagikan kode verifikasi kepada siapa pun.</span></footer>
+  </main>
+  <script src="/app.js"></script>
 </body>
 </html>
